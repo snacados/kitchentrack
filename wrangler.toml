@@ -1,6 +1,0 @@
-name = "kitchen-track"
-compatibility_date = "2024-09-23"
-pages_build_output_dir = "./dist"
-
-[build]
-command = "npm install && npm run build"
