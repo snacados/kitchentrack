@@ -1101,12 +1101,11 @@ export default function KitchenInventory() {
           gap: 6px;
           overflow-x: auto;
           padding-bottom: 12px;
+          padding-right: 20px;
           margin-bottom: 14px;
           -webkit-overflow-scrolling: touch;
           scrollbar-width: none;
           cursor: grab;
-          -webkit-mask-image: linear-gradient(to right, black 85%, transparent 100%);
-          mask-image: linear-gradient(to right, black 85%, transparent 100%);
         }
         .category-tabs::-webkit-scrollbar { display: none; }
         .cat-tab {
