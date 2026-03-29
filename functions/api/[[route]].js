@@ -275,7 +275,6 @@ async function deleteItem(db, user, itemId) {
 
 export async function onRequest(context) {
   const { request, env } = context;
-  const db = env.DB;
   const url = new URL(request.url);
   const path = url.pathname.replace("/api", "");
   const method = request.method;
@@ -285,6 +284,11 @@ export async function onRequest(context) {
   }
 
   try {
+    const db = env.DB;
+    if (!db) {
+      return err("Database not configured. Please bind a D1 database named 'DB' to this Pages project. Go to Cloudflare Dashboard → your Pages project → Settings → Functions → D1 database bindings → add variable name 'DB' and select your database.", 503);
+    }
+
     await initDb(db);
 
     // Public routes
@@ -321,7 +325,7 @@ export async function onRequest(context) {
 
     return err("Not found", 404);
   } catch (e) {
-    console.error(e);
-    return err("Internal server error: " + e.message, 500);
+    console.error("API Error:", e);
+    return err("Internal server error: " + (e.message || "Unknown error"), 500);
   }
 }

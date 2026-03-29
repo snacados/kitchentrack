@@ -114,7 +114,16 @@ function api(token) {
     const opts = { method, headers };
     if (body) opts.body = JSON.stringify(body);
     const res = await fetch(`${API_BASE}${path}`, opts);
-    const data = await res.json();
+    const text = await res.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(
+        res.ok ? "Server returned an invalid response. Is the D1 database binding configured?"
+               : `Server error (${res.status}): ${text.slice(0, 200) || "Empty response. The D1 database binding may not be configured — see README."}`
+      );
+    }
     if (!res.ok) throw new Error(data.error || "Request failed");
     return data;
   }
@@ -1140,6 +1149,7 @@ export default function KitchenInventory() {
         }
         .user-menu-item:hover { background: var(--bg-input); }
         .user-menu-item.danger { color: var(--expired); }
+        .user-menu-item.install { color: var(--accent); font-weight: 500; }
         .user-menu-divider { height: 1px; background: var(--border); margin: 4px 0; }
         .user-menu-header { padding: 10px 14px; }
         .user-menu-name { font-weight: 600; font-size: 14px; display: block; }
@@ -1273,6 +1283,34 @@ export default function KitchenInventory() {
 // ─── User Menu (floating) ───
 function UserMenu({ user, household, dark, onToggleDark, onLogout, onHousehold }) {
   const [open, setOpen] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState(null);
+  const [isInstalled, setIsInstalled] = useState(false);
+
+  useEffect(() => {
+    // Check if already installed as PWA
+    if (window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone) {
+      setIsInstalled(true);
+    }
+    // Capture the beforeinstallprompt event (Chrome/Edge/Android)
+    const handler = (e) => { e.preventDefault(); setInstallPrompt(e); };
+    window.addEventListener("beforeinstallprompt", handler);
+    window.addEventListener("appinstalled", () => setIsInstalled(true));
+    return () => window.removeEventListener("beforeinstallprompt", handler);
+  }, []);
+
+  const handleInstall = async () => {
+    if (installPrompt) {
+      installPrompt.prompt();
+      const result = await installPrompt.userChoice;
+      if (result.outcome === "accepted") setIsInstalled(true);
+      setInstallPrompt(null);
+    }
+    setOpen(false);
+  };
+
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  const showInstallOption = !isInstalled && (installPrompt || isIOS);
+
   return (
     <>
       <div style={{ position: "fixed", top: 14, right: 16, zIndex: 60, display: "flex", gap: 8, alignItems: "center" }}>
@@ -1294,6 +1332,20 @@ function UserMenu({ user, household, dark, onToggleDark, onLogout, onHousehold }
             <button className="user-menu-item" onClick={() => { setOpen(false); onHousehold(); }}>
               👨‍👩‍👧‍👦 Household Settings
             </button>
+            {showInstallOption && (
+              <>
+                <div className="user-menu-divider" />
+                {installPrompt ? (
+                  <button className="user-menu-item install" onClick={handleInstall}>
+                    📲 Install App
+                  </button>
+                ) : isIOS ? (
+                  <button className="user-menu-item install" onClick={() => { setOpen(false); alert("To install: tap the Share button (square with arrow) in Safari, then tap \"Add to Home Screen\""); }}>
+                    📲 Install App
+                  </button>
+                ) : null}
+              </>
+            )}
             <div className="user-menu-divider" />
             <button className="user-menu-item danger" onClick={() => { setOpen(false); onLogout(); }}>
               Sign Out
