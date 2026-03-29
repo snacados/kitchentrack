@@ -1,237 +1,193 @@
-# Kitchen Track — Complete Setup Guide (From Zero)
+# Kitchen Track v2 — With Accounts & Household Sync
 
-This guide assumes you have nothing installed and walks you through every step to get your Kitchen Track app live on Cloudflare Pages.
+## What's New
 
----
+This version adds user accounts and household sharing. Everyone in a household sees the same inventory in real-time across all their devices.
 
-## Part 1: Install the Tools You Need
-
-You need two things installed on your computer: **Git** (to upload your code) and **Node.js** (to build the app). Pick your operating system below.
-
-### Windows
-
-**Step 1 — Install Git:**
-1. Go to https://git-scm.com/download/win
-2. Download the installer and run it
-3. Click "Next" through all the screens — the defaults are fine
-4. When done, you'll have a program called **Git Bash** — use this for all the commands below
-
-**Step 2 — Install Node.js:**
-1. Go to https://nodejs.org
-2. Download the **LTS** version (the green button on the left)
-3. Run the installer, click "Next" through everything
-4. Restart your computer after installing
-
-**Step 3 — Verify both are installed:**
-Open **Git Bash** (search for it in your Start menu) and type:
-```
-git --version
-node --version
-```
-Both should print a version number. If they do, you're good.
+- **Sign up / Sign in** — Simple email + password auth
+- **Households** — Each user gets a household when they sign up
+- **Invite code** — Share your 8-character code so family members can join
+- **Cloud sync** — All data stored in Cloudflare D1 (serverless database), synced every 30 seconds
+- **Member management** — Household owner can rename, regenerate invite codes, or remove members
 
 ---
 
-### Mac
+## How It Works
 
-**Step 1 — Install Git:**
-1. Open the **Terminal** app (search for "Terminal" in Spotlight with Cmd+Space)
-2. Type: `git --version`
-3. If Git isn't installed, your Mac will prompt you to install it — click "Install"
-4. If it prints a version number, you already have it
-
-**Step 2 — Install Node.js:**
-1. Go to https://nodejs.org
-2. Download the **LTS** version (the green button)
-3. Open the downloaded `.pkg` file and follow the installer
-
-**Step 3 — Verify:**
-In Terminal, type:
-```
-git --version
-node --version
-```
-Both should print version numbers.
+- **Frontend**: React (Vite) → deployed as static files on Cloudflare Pages
+- **Backend**: Cloudflare Pages Functions → serverless API at `/api/*`
+- **Database**: Cloudflare D1 (SQLite at the edge) → tables auto-created on first request
 
 ---
 
-## Part 2: Create a GitHub Account
+## Deployment Guide (Step by Step)
 
-You need a free GitHub account to connect your code to Cloudflare.
+### Prerequisites
 
-1. Go to https://github.com
-2. Click **Sign up** and follow the steps
-3. Verify your email address
+You need these installed (see the previous guide if you need install instructions):
+- **Git** — to push code
+- **Node.js** — to build locally (optional but helpful)
+- **Wrangler CLI** — Cloudflare's tool (we'll install this below)
 
----
+### Step 1 — Install Wrangler
 
-## Part 3: Set Up Your Project Files
+Open your terminal (Git Bash on Windows, Terminal on Mac) and run:
 
-**Step 1 — Download the files from this conversation:**
-Download ALL of these files from the chat and save them into a single folder on your computer. For example, create a folder on your Desktop called `kitchen-track`.
-
-The folder structure must look EXACTLY like this:
-```
-kitchen-track/
-├── index.html
-├── package.json
-├── vite.config.js
-├── wrangler.toml
-├── .gitignore
-├── public/
-│   ├── _headers
-│   └── _redirects
-└── src/
-    ├── main.jsx
-    └── App.jsx
-```
-
-**Important — make sure you have the right files in the right places:**
-- `index.html`, `package.json`, `vite.config.js`, `wrangler.toml`, and `.gitignore` go directly in the `kitchen-track` folder
-- Create a subfolder called `src` and put `main.jsx` and `App.jsx` inside it
-- Create a subfolder called `public` and put `_headers` and `_redirects` inside it
-- The file `kitchen-track.jsx` from the chat is the same as `App.jsx` — you only need one copy, saved as `src/App.jsx`
-
-**Note about the `.gitignore` file:** On Mac, files starting with a dot are hidden by default. If you can't see it after downloading:
-- In Finder, press `Cmd + Shift + .` to show hidden files
-- Or just create it yourself: open Terminal, navigate to your folder, and type `echo "node_modules\ndist\n.wrangler" > .gitignore`
-
-**Step 2 — Test the build locally (optional but recommended):**
-Open your terminal (Git Bash on Windows, Terminal on Mac) and navigate to your folder:
 ```bash
-cd ~/Desktop/kitchen-track
+npm install -g wrangler
 ```
-Then run:
+
+Then log in to Cloudflare:
+
 ```bash
+wrangler login
+```
+
+This opens a browser window — click "Allow" to authorize.
+
+### Step 2 — Create a D1 Database
+
+Run this command to create your database:
+
+```bash
+wrangler d1 create kitchen-track-db
+```
+
+It will output something like:
+
+```
+✅ Successfully created DB 'kitchen-track-db'
+
+[[d1_databases]]
+binding = "DB"
+database_name = "kitchen-track-db"
+database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+```
+
+**Copy the `database_id` value** — you'll need it in the next step.
+
+### Step 3 — Create wrangler.toml
+
+Create a file called `wrangler.toml` in your project root (same folder as `package.json`) with this content:
+
+```toml
+name = "kitchen-track"
+compatibility_date = "2024-09-23"
+pages_build_output_dir = "./dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "kitchen-track-db"
+database_id = "PASTE_YOUR_DATABASE_ID_HERE"
+```
+
+**Replace `PASTE_YOUR_DATABASE_ID_HERE` with the actual database_id from Step 2.**
+
+⚠️ **IMPORTANT**: The `wrangler.toml` file is ONLY used for Wrangler CLI deploys. Do NOT push it if you're using Git-based deploys (see Step 4 options).
+
+### Step 4 — Deploy
+
+You have two options:
+
+#### Option A: Deploy with Wrangler CLI (Recommended for D1)
+
+This is the simplest way since D1 bindings are configured in `wrangler.toml`:
+
+```bash
+# Build the frontend
 npm install
 npm run build
+
+# Deploy everything (Pages + Functions + D1 binding)
+wrangler pages deploy dist --project-name kitchen-track
 ```
-If you see a `dist/` folder appear with no errors, everything is correct. If you get an error about `src/main.jsx` not found, double-check that the `src/` folder exists with `main.jsx` and `App.jsx` inside it.
 
----
+The first time, Wrangler will create the Pages project. Your app will be live at:
+`https://kitchen-track.pages.dev`
 
-## Part 4: Upload Your Code to GitHub
-
-**Step 1 — Create a new repository on GitHub:**
-1. Go to https://github.com/new
-2. Repository name: `kitchen-track`
-3. Leave it as **Public** (Cloudflare needs to read it)
-4. Do NOT check "Add a README" or any other boxes
-5. Click **Create repository**
-6. You'll see a page with instructions — keep this page open
-
-**Step 2 — Push your code:**
-Open your terminal and navigate to your project folder:
+**To update later:**
 ```bash
-cd ~/Desktop/kitchen-track
+npm run build
+wrangler pages deploy dist --project-name kitchen-track
 ```
 
-Now run these commands one at a time:
-```bash
-git init
-git add .
-git commit -m "Initial commit"
-git branch -M main
-git remote add origin https://github.com/YOUR_GITHUB_USERNAME/kitchen-track.git
-git push -u origin main
-```
+#### Option B: Deploy via Git + Cloudflare Dashboard
 
-**Replace `YOUR_GITHUB_USERNAME` with your actual GitHub username.**
-
-When you run `git push`, GitHub will ask for your credentials:
-- **Username:** Your GitHub username
-- **Password:** You need a **Personal Access Token** (not your regular password)
-
-**To create a Personal Access Token:**
-1. Go to https://github.com/settings/tokens
-2. Click **Generate new token (classic)**
-3. Give it a name like "kitchen-track"
-4. Check the **repo** box
-5. Click **Generate token**
-6. Copy the token immediately — you won't see it again
-7. Paste it when Git asks for your password
-
-**Step 3 — Verify your code is on GitHub:**
-Go to `https://github.com/YOUR_USERNAME/kitchen-track` in your browser. You should see all your files, including the `src/` folder with `main.jsx` and `App.jsx` inside it.
-
-If the `src/` folder is missing, that's the problem. Go back and make sure the folder structure is correct, then run:
-```bash
-git add .
-git commit -m "Add missing files"
-git push
-```
-
----
-
-## Part 5: Deploy to Cloudflare Pages
-
-**Step 1 — Create a Cloudflare account:**
-1. Go to https://dash.cloudflare.com/sign-up
-2. Sign up with your email — it's free
-
-**Step 2 — Create a Pages project:**
-1. In the Cloudflare dashboard, click **Workers & Pages** in the left sidebar
-2. Click the **Create** button
-3. Click the **Pages** tab
-4. Click **Connect to Git**
-
-**Step 3 — Connect GitHub:**
-1. Click **Connect GitHub**
-2. Authorize Cloudflare to access your repositories
-3. Select the `kitchen-track` repository
-4. Click **Begin setup**
-
-**Step 4 — Configure the build:**
-- **Project name:** `kitchen-track` (this becomes your URL)
-- **Production branch:** `main`
-- **Framework preset:** Select **Vite** from the dropdown
-- **Build command:** `npm install && npm run build`
-- **Build output directory:** `dist`
-
-**Step 5 — Deploy:**
-1. Click **Save and Deploy**
-2. Wait for the build to complete (usually 1-2 minutes)
-3. When it says "Success", your app is live!
-
-**Step 6 — Visit your app:**
-Your app will be at: `https://kitchen-track.pages.dev`
-
-(If the name was taken, Cloudflare may add a suffix like `kitchen-track-abc.pages.dev`)
-
----
-
-## Part 6: Making Changes Later
-
-Whenever you want to update the app:
-
-1. Edit the files in your `kitchen-track` folder
-2. Open your terminal and navigate to the folder:
+1. Push your code to GitHub (but do NOT include `wrangler.toml`):
    ```bash
-   cd ~/Desktop/kitchen-track
-   ```
-3. Push the changes:
-   ```bash
+   git init
    git add .
-   git commit -m "Description of what you changed"
-   git push
+   git commit -m "Kitchen Track v2"
+   git remote add origin https://github.com/YOUR_USER/kitchen-track.git
+   git push -u origin main
    ```
-4. Cloudflare automatically detects the push and re-deploys (takes about 1 minute)
+
+2. In the Cloudflare dashboard:
+   - Go to **Workers & Pages** → **Create** → **Pages** → **Connect to Git**
+   - Select your repo, set framework to **Vite**, build command to `npm install && npm run build`, output to `dist`
+   - Deploy
+
+3. **Bind the D1 database** (this is the critical step):
+   - Go to your Pages project → **Settings** → **Functions** → **D1 database bindings**
+   - Click **Add binding**
+   - Variable name: `DB`
+   - D1 database: Select `kitchen-track-db`
+   - Click **Save**
+
+4. **Redeploy** to pick up the binding (push a commit or trigger a redeploy from the dashboard)
+
+### Step 5 — Test It
+
+1. Go to your app URL (e.g., `https://kitchen-track.pages.dev`)
+2. You should see the sign-up / sign-in page
+3. Create an account — this also creates your household
+4. Add some items, then sign in from another device to see them sync
+
+### Step 6 — Invite Family Members
+
+1. Click your avatar (top right) → **Household Settings**
+2. Copy the **Invite Code** (8-character code)
+3. Send it to your family member
+4. They sign up for their own account, then go to **Household Settings** → paste the code in **Join Another Household** → click **Join**
+5. Now you all share the same inventory!
+
+---
+
+## Project Structure
+
+```
+kitchen-track/
+├── index.html              # Entry point
+├── package.json            # Dependencies
+├── vite.config.js          # Vite config
+├── wrangler.toml           # Cloudflare config (create manually, see Step 3)
+├── .gitignore
+├── public/
+│   ├── _headers            # Security headers
+│   └── _redirects          # SPA routing
+├── src/
+│   ├── main.jsx            # React mount
+│   └── App.jsx             # Full app (auth + inventory)
+└── functions/
+    └── api/
+        └── [[route]].js    # Backend API (auth, households, items CRUD)
+```
 
 ---
 
 ## Troubleshooting
 
-**"src/main.jsx not found" during build:**
-Your `src/` folder didn't get uploaded. Go to your GitHub repo in a browser and check that `src/main.jsx` and `src/App.jsx` exist. If not, make sure the files are in the right place locally and run `git add . && git commit -m "fix" && git push`.
+**"DB is not defined" or "Internal server error"**
+The D1 database binding isn't configured. If using Wrangler CLI, check your `wrangler.toml` has the correct `database_id`. If using Git deploys, add the D1 binding in the Cloudflare dashboard (Settings → Functions → D1 database bindings → variable name `DB`).
 
-**"Permission denied" when pushing to GitHub:**
-You need a Personal Access Token — see Part 4, Step 2 above.
+**Sign up works but items don't save**
+Same as above — the D1 binding is missing. The auth tables and items tables are all in the same D1 database.
 
-**Build succeeds but app shows a blank page:**
-Open browser developer tools (F12) and check the Console tab for errors. The most common cause is a typo in a filename — make sure `App.jsx` has a capital A.
+**"Invalid email or password" but I just signed up**
+Emails are case-insensitive (stored lowercase). Make sure you're using the same email.
 
-**"command not found: git" or "command not found: node":**
-The tool isn't installed or your terminal needs to be restarted. Close and reopen your terminal, then try again.
+**Changes from another device don't appear**
+The app polls every 30 seconds. Wait a moment or refresh the page manually.
 
-**Changes aren't showing up:**
-Make sure you committed AND pushed. Run `git status` — if it shows changed files, you need to `git add . && git commit -m "update" && git push`.
+**"Unauthorized" errors after working fine**
+Your session token may have been cleared. Sign in again.

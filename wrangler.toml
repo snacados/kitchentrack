@@ -1,0 +1,8 @@
+name = "kitchentrack"
+compatibility_date = "2024-09-23"
+pages_build_output_dir = "./dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "kitchentrack-db"
+database_id = "fb275fec-edf7-4941-9a12-d94ffb4b4529"
