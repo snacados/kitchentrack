@@ -141,6 +141,11 @@ function api(token) {
     addItem: (item) => request("/items", "POST", item),
     updateItem: (id, updates) => request(`/items/${id}`, "PUT", updates),
     deleteItem: (id) => request(`/items/${id}`, "DELETE"),
+    getRecipes: () => request("/recipes"),
+    addRecipe: (recipe) => request("/recipes", "POST", recipe),
+    importRecipe: (url) => request("/recipes/import", "POST", { url }),
+    updateRecipe: (id, updates) => request(`/recipes/${id}`, "PUT", updates),
+    deleteRecipe: (id) => request(`/recipes/${id}`, "DELETE"),
   };
 }
 
@@ -641,6 +646,333 @@ function HouseholdPage({ user, household, members, client, onRefresh, onBack }) 
   );
 }
 
+// ─── Ingredient Matching ───
+function normalizeIngredientName(text) {
+  // Strip quantities, units, and prep instructions to get the core ingredient
+  return text
+    .toLowerCase()
+    .replace(/[\d½¼¾⅓⅔⅛]+/g, "")
+    .replace(/\b(cups?|tbsp|tsp|tablespoons?|teaspoons?|oz|ounces?|lbs?|pounds?|g|grams?|kg|ml|liters?|pinch|dash|bunch|cloves?|cans?|packages?|pieces?|slices?|sticks?|heads?|stalks?|sprigs?|large|medium|small|minced|chopped|diced|sliced|crushed|fresh|dried|ground|whole|to taste|optional|about|approximately|divided|plus more|for garnish|or more)\b/g, "")
+    .replace(/[^a-z ]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function matchRecipeToInventory(recipe, inventoryItems) {
+  const activeItems = inventoryItems.filter(i => i.quantity > 0);
+  const inventoryNames = activeItems.map(i => i.name.toLowerCase());
+
+  let matched = 0;
+  let missing = [];
+  const total = recipe.ingredients.length;
+
+  for (const ing of recipe.ingredients) {
+    const normalized = normalizeIngredientName(ing);
+    const words = normalized.split(" ").filter(w => w.length > 2);
+    const found = inventoryNames.some(invName =>
+      words.some(w => invName.includes(w)) || normalized.split(" ").some(w => invName.includes(w))
+    );
+    if (found) matched++;
+    else missing.push(ing);
+  }
+
+  return { matched, total, missing, percentage: total > 0 ? Math.round((matched / total) * 100) : 0 };
+}
+
+// ─── Recipe Detail View ───
+function RecipeDetail({ recipe, inventoryItems, onBack, onDelete }) {
+  const match = matchRecipeToInventory(recipe, inventoryItems);
+  const [confirmDel, setConfirmDel] = useState(false);
+
+  return (
+    <div className="recipe-detail">
+      <div className="location-header">
+        <h2>📖 Recipe</h2>
+        <button className="btn-back" onClick={onBack}>← Back</button>
+      </div>
+
+      <div className="recipe-detail-card">
+        <h3 className="recipe-detail-title">{recipe.title}</h3>
+        <div className="recipe-meta-row">
+          {recipe.servings && <span className="recipe-meta-tag">👤 {recipe.servings}</span>}
+          {recipe.prep_time && <span className="recipe-meta-tag">⏱️ Prep: {recipe.prep_time}</span>}
+          {recipe.cook_time && <span className="recipe-meta-tag">🔥 Cook: {recipe.cook_time}</span>}
+        </div>
+        {recipe.source_url && (
+          <a href={recipe.source_url} target="_blank" rel="noopener noreferrer" className="recipe-source-link">
+            View original recipe →
+          </a>
+        )}
+        {recipe.tags?.length > 0 && (
+          <div className="recipe-tags">{recipe.tags.map((t, i) => <span key={i} className="recipe-tag">{t}</span>)}</div>
+        )}
+      </div>
+
+      {/* Inventory Match */}
+      <div className="recipe-match-card">
+        <div className="match-header">
+          <span className="match-percentage" style={{ color: match.percentage >= 80 ? "var(--fresh)" : match.percentage >= 50 ? "var(--warning)" : "var(--critical)" }}>
+            {match.percentage}% match
+          </span>
+          <span className="match-detail">{match.matched} of {match.total} ingredients in stock</span>
+        </div>
+        <div className="match-bar">
+          <div className="match-bar-fill" style={{ width: `${match.percentage}%`, background: match.percentage >= 80 ? "var(--fresh)" : match.percentage >= 50 ? "var(--warning)" : "var(--critical)" }} />
+        </div>
+        {match.missing.length > 0 && (
+          <div className="match-missing">
+            <span className="match-missing-label">Missing:</span>
+            {match.missing.map((m, i) => <span key={i} className="match-missing-item">{m}</span>)}
+          </div>
+        )}
+      </div>
+
+      {/* Ingredients */}
+      <div className="recipe-section">
+        <h4>Ingredients</h4>
+        <ul className="recipe-ingredients-list">
+          {recipe.ingredients.map((ing, i) => {
+            const normalized = normalizeIngredientName(ing);
+            const words = normalized.split(" ").filter(w => w.length > 2);
+            const inStock = inventoryItems.filter(it => it.quantity > 0).some(it =>
+              words.some(w => it.name.toLowerCase().includes(w))
+            );
+            return (
+              <li key={i} className={`recipe-ingredient ${inStock ? "in-stock" : "not-in-stock"}`}>
+                <span className="stock-dot">{inStock ? "✓" : "✕"}</span>
+                {ing}
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+
+      {/* Steps */}
+      <div className="recipe-section">
+        <h4>Instructions</h4>
+        <ol className="recipe-steps-list">
+          {recipe.steps.map((step, i) => (
+            <li key={i} className="recipe-step">{step}</li>
+          ))}
+        </ol>
+      </div>
+
+      {/* Actions */}
+      <div className="recipe-actions">
+        {!confirmDel ? (
+          <button className="btn-small btn-danger" onClick={() => setConfirmDel(true)}>Delete Recipe</button>
+        ) : (
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn-small btn-muted" onClick={() => setConfirmDel(false)}>Cancel</button>
+            <button className="btn-small btn-danger" onClick={() => { onDelete(recipe.id); onBack(); }}>Confirm Delete</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Recipe Card (for list view) ───
+function RecipeCard({ recipe, inventoryItems, onClick }) {
+  const match = matchRecipeToInventory(recipe, inventoryItems);
+  return (
+    <div className="recipe-card" onClick={onClick}>
+      <div className="recipe-card-top">
+        <span className="recipe-card-title">{recipe.title}</span>
+        <span className="recipe-card-match" style={{ color: match.percentage >= 80 ? "var(--fresh)" : match.percentage >= 50 ? "var(--warning)" : "var(--critical)" }}>
+          {match.percentage}%
+        </span>
+      </div>
+      <div className="recipe-card-bottom">
+        <span className="recipe-card-meta">
+          {recipe.ingredients.length} ingredients · {match.matched} in stock
+          {recipe.cook_time ? ` · ${recipe.cook_time}` : ""}
+        </span>
+        {match.percentage >= 80 && <span className="recipe-ready-badge">Ready to cook!</span>}
+      </div>
+    </div>
+  );
+}
+
+// ─── Add Recipe Form (Manual + URL Import) ───
+function AddRecipeForm({ client, onAdded }) {
+  const [mode, setMode] = useState("url"); // "url" or "manual"
+  const [url, setUrl] = useState("");
+  const [title, setTitle] = useState("");
+  const [ingredients, setIngredients] = useState("");
+  const [steps, setSteps] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [open, setOpen] = useState(false);
+
+  const handleImport = async () => {
+    if (!url.trim()) return;
+    setError(""); setLoading(true);
+    try {
+      const recipe = await client.importRecipe(url.trim());
+      onAdded(recipe);
+      setUrl(""); setOpen(false);
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  };
+
+  const handleManualAdd = async () => {
+    if (!title.trim() || !ingredients.trim() || !steps.trim()) return;
+    setError(""); setLoading(true);
+    try {
+      const recipe = await client.addRecipe({
+        title: title.trim(),
+        ingredients: ingredients.split("\n").map(l => l.trim()).filter(Boolean),
+        steps: steps.split("\n").map(l => l.trim()).filter(Boolean),
+      });
+      onAdded(recipe);
+      setTitle(""); setIngredients(""); setSteps(""); setOpen(false);
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  };
+
+  if (!open) {
+    return (
+      <button className="btn-add-item" onClick={() => setOpen(true)}>
+        <span className="plus-icon">+</span> Add Recipe
+      </button>
+    );
+  }
+
+  return (
+    <div className="add-form-overlay" onClick={e => e.target === e.currentTarget && setOpen(false)}>
+      <div className="add-form">
+        <div className="add-form-header">
+          <h3>Add Recipe</h3>
+          <button className="btn-close" onClick={() => setOpen(false)}>✕</button>
+        </div>
+
+        <div className="auth-tabs" style={{ marginBottom: 16 }}>
+          <button className={`auth-tab ${mode === "url" ? "active" : ""}`} onClick={() => setMode("url")}>From URL</button>
+          <button className={`auth-tab ${mode === "manual" ? "active" : ""}`} onClick={() => setMode("manual")}>Manual</button>
+        </div>
+
+        {mode === "url" ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div className="form-group">
+              <label>Recipe URL</label>
+              <input type="url" value={url} onChange={e => setUrl(e.target.value)}
+                placeholder="https://www.allrecipes.com/recipe/..." onKeyDown={e => e.key === "Enter" && handleImport()} />
+            </div>
+            <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
+              Works with most recipe sites (AllRecipes, Food Network, Bon Appétit, NYT Cooking, etc.)
+            </p>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div className="form-group">
+              <label>Recipe Title</label>
+              <input type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Chicken Stir Fry" />
+            </div>
+            <div className="form-group">
+              <label>Ingredients (one per line)</label>
+              <textarea value={ingredients} onChange={e => setIngredients(e.target.value)}
+                placeholder={"2 chicken breasts\n1 tbsp soy sauce\n2 cups broccoli\n..."} rows={6}
+                style={{ width: "100%", padding: "10px 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)",
+                  background: "var(--bg-input)", color: "var(--text)", fontFamily: "var(--font-body)", fontSize: 14, resize: "vertical", outline: "none" }} />
+            </div>
+            <div className="form-group">
+              <label>Steps (one per line)</label>
+              <textarea value={steps} onChange={e => setSteps(e.target.value)}
+                placeholder={"Cut chicken into cubes\nHeat oil in wok\nStir fry chicken until golden\n..."} rows={6}
+                style={{ width: "100%", padding: "10px 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)",
+                  background: "var(--bg-input)", color: "var(--text)", fontFamily: "var(--font-body)", fontSize: 14, resize: "vertical", outline: "none" }} />
+            </div>
+          </div>
+        )}
+
+        {error && <div className="auth-error" style={{ marginTop: 12 }}>{error}</div>}
+
+        <button className="btn-submit" style={{ marginTop: 16 }}
+          onClick={mode === "url" ? handleImport : handleManualAdd}
+          disabled={loading || (mode === "url" ? !url.trim() : (!title.trim() || !ingredients.trim() || !steps.trim()))}>
+          {loading ? "Importing..." : mode === "url" ? "Import Recipe" : "Save Recipe"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Recipes Page ───
+function RecipesPage({ recipes, inventoryItems, client, onRecipesChange }) {
+  const [view, setView] = useState("list"); // "list", "detail", "canMake"
+  const [selectedRecipe, setSelectedRecipe] = useState(null);
+  const [searchQ, setSearchQ] = useState("");
+
+  const handleAdded = (recipe) => {
+    onRecipesChange(prev => [recipe, ...prev]);
+  };
+
+  const handleDelete = async (id) => {
+    try {
+      await client.deleteRecipe(id);
+      onRecipesChange(prev => prev.filter(r => r.id !== id));
+    } catch (e) { console.error(e); }
+  };
+
+  if (selectedRecipe) {
+    const recipe = recipes.find(r => r.id === selectedRecipe);
+    if (recipe) {
+      return <RecipeDetail recipe={recipe} inventoryItems={inventoryItems}
+        onBack={() => setSelectedRecipe(null)} onDelete={handleDelete} />;
+    }
+  }
+
+  // Sort: "canMake" shows highest match first, "list" shows newest first
+  const sorted = [...recipes]
+    .filter(r => !searchQ || r.title.toLowerCase().includes(searchQ.toLowerCase()) ||
+      r.ingredients.some(i => i.toLowerCase().includes(searchQ.toLowerCase())))
+    .sort((a, b) => {
+      if (view === "canMake") {
+        return matchRecipeToInventory(b, inventoryItems).percentage - matchRecipeToInventory(a, inventoryItems).percentage;
+      }
+      return 0; // keep DB order (newest first)
+    });
+
+  const canMakeRecipes = recipes.filter(r => matchRecipeToInventory(r, inventoryItems).percentage >= 80);
+
+  return (
+    <div className="recipes-page">
+      <div className="location-header">
+        <h2>📖 Recipes</h2>
+        <span className="item-count">{recipes.length} recipes</span>
+      </div>
+
+      {/* Filter tabs */}
+      <div className="category-tabs" style={{ cursor: "default" }}>
+        <button className={`cat-tab ${view === "list" ? "active" : ""}`} onClick={() => setView("list")}>
+          All Recipes
+        </button>
+        <button className={`cat-tab ${view === "canMake" ? "active" : ""}`} onClick={() => setView("canMake")}>
+          🍳 Can Make Now {canMakeRecipes.length > 0 && <span className="tab-count">{canMakeRecipes.length}</span>}
+        </button>
+      </div>
+
+      {/* Search */}
+      <SearchBar value={searchQ} onChange={setSearchQ} onClear={() => setSearchQ("")} />
+
+      {/* Add Recipe */}
+      <AddRecipeForm client={client} onAdded={handleAdded} />
+
+      {/* Recipe List */}
+      {sorted.length === 0 ? (
+        <div className="empty-state">
+          <span className="empty-icon">📖</span>
+          <p>{view === "canMake" ? "No recipes match your current inventory" : searchQ ? "No recipes found" : "No recipes yet — add one above!"}</p>
+        </div>
+      ) : sorted.map(recipe => (
+        <RecipeCard key={recipe.id} recipe={recipe} inventoryItems={inventoryItems}
+          onClick={() => setSelectedRecipe(recipe.id)} />
+      ))}
+    </div>
+  );
+}
+
 // ─── Main App ───
 export default function KitchenInventory() {
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY));
@@ -648,6 +980,7 @@ export default function KitchenInventory() {
   const [household, setHousehold] = useState(null);
   const [members, setMembers] = useState([]);
   const [items, setItems] = useState([]);
+  const [recipes, setRecipes] = useState([]);
   const [dark, setDark] = useState(() => localStorage.getItem(THEME_KEY) === "dark");
   const [page, setPage] = useState("home");
   const [search, setSearch] = useState("");
@@ -664,11 +997,12 @@ export default function KitchenInventory() {
   const loadData = useCallback(async () => {
     if (!token) { setLoading(false); return; }
     try {
-      const [me, serverItems] = await Promise.all([client.getMe(), client.getItems()]);
+      const [me, serverItems, serverRecipes] = await Promise.all([client.getMe(), client.getItems(), client.getRecipes()]);
       setUser(me.user);
       setHousehold(me.household);
       setMembers(me.members);
       setItems(serverItems.map(normalizeItem));
+      setRecipes(serverRecipes);
     } catch (err) {
       console.error("Load failed:", err);
       // Token invalid — clear it
@@ -772,6 +1106,7 @@ export default function KitchenInventory() {
     { id: "freezer", label: "Freezer", icon: "🧊" },
     { id: "pantry", label: "Pantry", icon: "🏠" },
     { id: "spices", label: "Spices", icon: "🌶️" },
+    { id: "recipes", label: "Recipes", icon: "📖" },
   ];
 
   // ─── Render ───
@@ -1156,6 +1491,63 @@ export default function KitchenInventory() {
         .user-menu-email { font-size: 12px; color: var(--text-muted); display: block; }
         .user-menu-household { font-size: 11px; color: var(--accent); margin-top: 2px; display: block; }
 
+        /* ─── Recipes ─── */
+        .recipe-card {
+          background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
+          padding: 14px; margin-bottom: 8px; cursor: pointer;
+          transition: transform var(--transition), box-shadow var(--transition);
+        }
+        .recipe-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+        .recipe-card-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+        .recipe-card-title { font-weight: 600; font-size: 15px; }
+        .recipe-card-match { font-weight: 700; font-size: 14px; }
+        .recipe-card-bottom { display: flex; justify-content: space-between; align-items: center; }
+        .recipe-card-meta { font-size: 12px; color: var(--text-secondary); }
+        .recipe-ready-badge {
+          font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px;
+          background: var(--fresh-bg); color: var(--fresh);
+        }
+
+        .recipe-detail-card {
+          background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
+          padding: 18px; margin-bottom: 12px;
+        }
+        .recipe-detail-title { font-family: var(--font-display); font-size: 1.4rem; font-weight: 700; margin-bottom: 8px; }
+        .recipe-meta-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+        .recipe-meta-tag { font-size: 12px; color: var(--text-secondary); background: var(--bg-input); padding: 4px 10px; border-radius: 12px; }
+        .recipe-source-link {
+          font-size: 13px; color: var(--accent); text-decoration: none; display: inline-block; margin-bottom: 6px;
+        }
+        .recipe-source-link:hover { text-decoration: underline; }
+        .recipe-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+        .recipe-tag { font-size: 11px; padding: 3px 8px; border-radius: 10px; background: var(--accent-light); color: var(--accent); }
+
+        .recipe-match-card {
+          background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
+          padding: 16px; margin-bottom: 12px;
+        }
+        .match-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .match-percentage { font-weight: 700; font-size: 18px; }
+        .match-detail { font-size: 13px; color: var(--text-secondary); }
+        .match-bar { height: 6px; background: var(--bg-input); border-radius: 3px; overflow: hidden; margin-bottom: 10px; }
+        .match-bar-fill { height: 100%; border-radius: 3px; transition: width 0.4s ease; }
+        .match-missing { display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-start; }
+        .match-missing-label { font-size: 12px; font-weight: 600; color: var(--critical); margin-right: 2px; }
+        .match-missing-item { font-size: 12px; color: var(--text-secondary); background: var(--bg-input); padding: 2px 8px; border-radius: 8px; }
+
+        .recipe-section { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; margin-bottom: 12px; }
+        .recipe-section h4 { font-family: var(--font-display); font-size: 1rem; font-weight: 600; margin-bottom: 12px; }
+        .recipe-ingredients-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+        .recipe-ingredient { font-size: 14px; display: flex; align-items: flex-start; gap: 8px; }
+        .recipe-ingredient.in-stock { color: var(--text); }
+        .recipe-ingredient.not-in-stock { color: var(--text-secondary); }
+        .stock-dot { width: 18px; text-align: center; flex-shrink: 0; font-size: 12px; margin-top: 2px; }
+        .recipe-ingredient.in-stock .stock-dot { color: var(--fresh); }
+        .recipe-ingredient.not-in-stock .stock-dot { color: var(--critical); }
+        .recipe-steps-list { padding-left: 20px; display: flex; flex-direction: column; gap: 10px; }
+        .recipe-step { font-size: 14px; line-height: 1.5; }
+        .recipe-actions { margin-top: 12px; display: flex; justify-content: flex-end; gap: 8px; }
+
         /* ─── Responsive ─── */
         @media (max-width: 480px) {
           .main-container { padding: 12px 12px 100px; }
@@ -1247,6 +1639,11 @@ export default function KitchenInventory() {
             {["fridge", "freezer", "pantry", "spices"].includes(page) && (
               <LocationPage location={page} items={items} onUpdate={updateItem}
                 onDelete={deleteItem} onAdd={addItem} onTransfer={transferMeat} />
+            )}
+
+            {page === "recipes" && (
+              <RecipesPage recipes={recipes} inventoryItems={items} client={client}
+                onRecipesChange={setRecipes} />
             )}
           </div>
 
