@@ -56,6 +56,11 @@ const CATEGORY_ICONS = {
 
 const LOCATION_ICONS = { fridge: "❄️", freezer: "🧊", pantry: "🏠", spices: "🌶️" };
 
+const RECIPE_CATEGORIES = [
+  "Chicken", "Beef", "Pork", "Seafood", "Sides", "Soups", "Pasta",
+  "Beverages", "Salads", "Desserts", "Breakfast", "Vegetarian", "Other"
+];
+
 // ─── Helpers ───
 
 function getExpirationDays(location, category, subtype) {
@@ -121,7 +126,7 @@ function api(token) {
     } catch {
       throw new Error(
         res.ok ? "Server returned an invalid response. Is the D1 database binding configured?"
-               : `Server error (${res.status}): ${text.slice(0, 200) || "Empty response. The D1 database binding may not be configured — see README."}`
+          : `Server error (${res.status}): ${text.slice(0, 200) || "Empty response. The D1 database binding may not be configured — see README."}`
       );
     }
     if (!res.ok) throw new Error(data.error || "Request failed");
@@ -184,7 +189,7 @@ function ExpiryBadge({ daysLeft }) {
   return <span className={`expiry-badge ${status}`}>{labels[status]}</span>;
 }
 
-function ItemCard({ item, onUpdate, onDelete, onTransfer, compact = false }) {
+function ItemCard({ item, onUpdate, onDelete, onTransfer, onEdit, compact = false }) {
   const daysLeft = getDaysUntilExpiry(item);
   const status = getExpiryStatus(daysLeft);
   const canTransfer = item.category === "meat" && (item.location === "fridge" || item.location === "freezer");
@@ -208,6 +213,7 @@ function ItemCard({ item, onUpdate, onDelete, onTransfer, compact = false }) {
       <div className="item-card-actions">
         <QuantityControl quantity={item.quantity} onChange={(q) => onUpdate(item.id, { quantity: q })} />
         <div className="action-btns">
+          {onEdit && <button className="btn-transfer" onClick={() => onEdit(item.id)} title="Edit">✏️</button>}
           {canTransfer && (
             <button className="btn-transfer" onClick={() => onTransfer(item)}
               title={`Move to ${item.location === "fridge" ? "freezer" : "fridge"}`}>
@@ -221,41 +227,59 @@ function ItemCard({ item, onUpdate, onDelete, onTransfer, compact = false }) {
   );
 }
 
-function AddItemForm({ onAdd, initialLocation = "fridge" }) {
-  const [open, setOpen] = useState(false);
-  const [name, setName] = useState("");
-  const [location, setLocation] = useState(initialLocation);
-  const [category, setCategory] = useState(LOCATION_CATEGORIES[initialLocation][0]);
-  const [subtype, setSubtype] = useState("other");
-  const [quantity, setQuantity] = useState(1);
-  const [purchaseDate, setPurchaseDate] = useState(today());
+function AddItemForm({ onAdd, initialLocation = "fridge", editingItem = null, onCancel = null }) {
+  const [open, setOpen] = useState(!!editingItem);
+  const [name, setName] = useState(editingItem?.name || "");
+  const [location, setLocation] = useState(editingItem?.location || initialLocation);
+  const [category, setCategory] = useState(editingItem?.category || LOCATION_CATEGORIES[editingItem?.location || initialLocation][0]);
+  const [subtype, setSubtype] = useState(editingItem?.subtype || "other");
+  const [quantity, setQuantity] = useState(editingItem ? editingItem.quantity : 1);
+  const [purchaseDate, setPurchaseDate] = useState(editingItem?.purchaseDate || today());
   const nameRef = useRef(null);
 
-  useEffect(() => { setCategory(LOCATION_CATEGORIES[location][0]); }, [location]);
-  useEffect(() => {
-    const subtypes = EXPIRATION_RULES[location]?.[category];
+  const handleLocationChange = (loc) => {
+    setLocation(loc);
+    const newCat = LOCATION_CATEGORIES[loc][0];
+    setCategory(newCat);
+    const subtypes = EXPIRATION_RULES[loc]?.[newCat];
     if (subtypes) {
       const keys = Object.keys(subtypes);
       setSubtype(keys.includes("other") ? "other" : keys[0]);
     }
-  }, [location, category]);
-  useEffect(() => { if (open && nameRef.current) nameRef.current.focus(); }, [open]);
+  };
+
+  const handleCategoryChange = (cat) => {
+    setCategory(cat);
+    const subtypes = EXPIRATION_RULES[location]?.[cat];
+    if (subtypes) {
+      const keys = Object.keys(subtypes);
+      setSubtype(keys.includes("other") ? "other" : keys[0]);
+    }
+  };
+
+  useEffect(() => { if (open && nameRef.current && !editingItem) nameRef.current.focus(); }, [open, editingItem]);
 
   const handleSubmit = () => {
-    if (!name.trim()) return;
+    let finalName = name.trim();
+    if (!finalName) {
+      const stName = subtype.replace(/_/g, " ");
+      finalName = stName.charAt(0).toUpperCase() + stName.slice(1);
+    }
     const expDays = getExpirationDays(location, category, subtype);
     const expDate = new Date(purchaseDate);
     expDate.setDate(expDate.getDate() + expDays);
     onAdd({
-      name: name.trim(), location, category, subtype, quantity, purchaseDate,
+      name: finalName, location, category, subtype, quantity, purchaseDate,
       expirationDate: expDate.toISOString().split("T")[0],
     });
-    setName(""); setQuantity(1); setPurchaseDate(today()); setOpen(false);
+    if (!editingItem) {
+      setName(""); setQuantity(1); setPurchaseDate(today()); setOpen(false);
+    }
   };
 
   const subtypeOptions = EXPIRATION_RULES[location]?.[category] ? Object.keys(EXPIRATION_RULES[location][category]) : ["other"];
 
-  if (!open) {
+  if (!open && !editingItem) {
     return (
       <button className="btn-add-item" onClick={() => setOpen(true)}>
         <span className="plus-icon">+</span> Add Item
@@ -264,21 +288,22 @@ function AddItemForm({ onAdd, initialLocation = "fridge" }) {
   }
 
   return (
-    <div className="add-form-overlay" onClick={(e) => e.target === e.currentTarget && setOpen(false)}>
+    <div className="add-form-overlay" onClick={(e) => e.target === e.currentTarget && (editingItem ? onCancel() : setOpen(false))}>
       <div className="add-form">
         <div className="add-form-header">
-          <h3>Add New Item</h3>
-          <button className="btn-close" onClick={() => setOpen(false)}>✕</button>
+          <h3>{editingItem ? "Edit Item" : "Add New Item"}</h3>
+          <button className="btn-close" onClick={() => editingItem ? onCancel() : setOpen(false)}>✕</button>
         </div>
         <div className="form-grid">
           <div className="form-group full-width">
-            <label>Item Name</label>
+            <label>Item Name / Details {editingItem ? "" : "(Optional)"}</label>
             <input ref={nameRef} type="text" value={name} onChange={e => setName(e.target.value)}
-              placeholder="e.g. Chicken breast" onKeyDown={e => e.key === "Enter" && handleSubmit()} />
+              placeholder={editingItem ? "e.g. Chicken breast" : `e.g. Smoked (defaults to ${subtype.replace(/_/g, " ")})`}
+              onKeyDown={e => e.key === "Enter" && handleSubmit()} />
           </div>
           <div className="form-group">
             <label>Location</label>
-            <select value={location} onChange={e => setLocation(e.target.value)}>
+            <select value={location} onChange={e => handleLocationChange(e.target.value)}>
               {Object.keys(LOCATION_CATEGORIES).map(loc => (
                 <option key={loc} value={loc}>{LOCATION_ICONS[loc]} {loc.charAt(0).toUpperCase() + loc.slice(1)}</option>
               ))}
@@ -286,7 +311,7 @@ function AddItemForm({ onAdd, initialLocation = "fridge" }) {
           </div>
           <div className="form-group">
             <label>Category</label>
-            <select value={category} onChange={e => setCategory(e.target.value)}>
+            <select value={category} onChange={e => handleCategoryChange(e.target.value)}>
               {LOCATION_CATEGORIES[location].map(cat => (
                 <option key={cat} value={cat}>{CATEGORY_ICONS[cat]} {cat.replace(/_/g, " ")}</option>
               ))}
@@ -318,15 +343,15 @@ function AddItemForm({ onAdd, initialLocation = "fridge" }) {
             </div>
           </div>
         </div>
-        <button className="btn-submit" onClick={handleSubmit} disabled={!name.trim()}>
-          Add to {location.charAt(0).toUpperCase() + location.slice(1)}
+        <button className="btn-submit" onClick={handleSubmit}>
+          {editingItem ? "Save Changes" : `Add to ${location.charAt(0).toUpperCase() + location.slice(1)}`}
         </button>
       </div>
     </div>
   );
 }
 
-function AlertSection({ items, onUpdate, onDelete, onTransfer }) {
+function AlertSection({ items, onUpdate, onDelete, onTransfer, onEdit }) {
   const alertItems = items
     .filter(item => { const d = getDaysUntilExpiry(item); return d <= 5 && item.quantity > 0; })
     .sort((a, b) => getDaysUntilExpiry(a) - getDaysUntilExpiry(b));
@@ -346,7 +371,7 @@ function AlertSection({ items, onUpdate, onDelete, onTransfer }) {
         <div key={loc} className="alert-group">
           <h4 className="alert-group-title">{LOCATION_ICONS[loc]} {loc.charAt(0).toUpperCase() + loc.slice(1)}</h4>
           {locItems.map(item => (
-            <ItemCard key={item.id} item={item} onUpdate={onUpdate} onDelete={onDelete} onTransfer={onTransfer} compact />
+            <ItemCard key={item.id} item={item} onUpdate={onUpdate} onDelete={onDelete} onTransfer={onTransfer} onEdit={onEdit} compact />
           ))}
         </div>
       ))}
@@ -365,57 +390,67 @@ function SearchBar({ value, onChange, onClear }) {
   );
 }
 
-function DraggableScroll({ children, className }) {
+function DraggableScroll({ children, className, style }) {
   const ref = useRef(null);
   const isDragging = useRef(false);
   const startX = useRef(0);
   const scrollStart = useRef(0);
-  const hasMoved = useRef(false);
+  const preventClick = useRef(false);
 
-  const onPointerDown = (e) => {
+  const onMouseDown = (e) => {
     const el = ref.current; if (!el) return;
-    isDragging.current = true; hasMoved.current = false;
-    startX.current = e.clientX; scrollStart.current = el.scrollLeft;
-    el.setPointerCapture(e.pointerId); el.style.cursor = "grabbing"; el.style.userSelect = "none";
+    isDragging.current = true; preventClick.current = false;
+    startX.current = e.pageX - el.offsetLeft; scrollStart.current = el.scrollLeft;
   };
-  const onPointerMove = (e) => {
+  const onMouseMove = (e) => {
     if (!isDragging.current) return;
-    const dx = e.clientX - startX.current;
-    if (Math.abs(dx) > 3) hasMoved.current = true;
-    ref.current.scrollLeft = scrollStart.current - dx;
+    e.preventDefault();
+    const el = ref.current;
+    const x = e.pageX - el.offsetLeft;
+    const dx = x - startX.current;
+    if (Math.abs(dx) > 5) preventClick.current = true;
+    el.scrollLeft = scrollStart.current - dx;
   };
-  const onPointerUp = (e) => {
-    if (!isDragging.current) return;
-    isDragging.current = false;
-    const el = ref.current; el.releasePointerCapture(e.pointerId);
-    el.style.cursor = "grab"; el.style.userSelect = "";
-    if (hasMoved.current) {
-      const suppress = (ev) => { ev.stopPropagation(); ev.preventDefault(); };
-      el.addEventListener("click", suppress, { capture: true, once: true });
-    }
-  };
+  const onMouseUp = () => { isDragging.current = false; };
+  const onMouseLeave = () => { isDragging.current = false; };
 
   return (
-    <div ref={ref} className={className} onPointerDown={onPointerDown} onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp} onPointerCancel={onPointerUp} style={{ cursor: "grab" }}>
+    <div ref={ref} className={className} style={{ ...style, cursor: "grab", userSelect: "none", overflowX: "auto" }}
+      onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp}
+      onMouseLeave={onMouseLeave} onClickCapture={e => { if (preventClick.current) { e.stopPropagation(); e.preventDefault(); } }}>
       {children}
     </div>
   );
 }
 
-function LocationPage({ location, items, onUpdate, onDelete, onAdd, onTransfer }) {
+function LocationPage({ location, items, onUpdate, onDelete, onAdd, onTransfer, onEdit }) {
   const [filterCat, setFilterCat] = useState("all");
+  const [sortBy, setSortBy] = useState("expiry");
   const categories = LOCATION_CATEGORIES[location];
   const filtered = items
     .filter(i => i.location === location && i.quantity > 0)
     .filter(i => filterCat === "all" || i.category === filterCat)
-    .sort((a, b) => getDaysUntilExpiry(a) - getDaysUntilExpiry(b));
+    .sort((a, b) => {
+      if (sortBy === "expiry") return getDaysUntilExpiry(a) - getDaysUntilExpiry(b);
+      if (sortBy === "alpha") return a.name.localeCompare(b.name);
+      if (sortBy === "bought") return new Date(b.purchaseDate) - new Date(a.purchaseDate);
+      if (sortBy === "qty") return b.quantity - a.quantity;
+      return 0;
+    });
 
   return (
     <div className="location-page">
       <div className="location-header">
         <h2>{LOCATION_ICONS[location]} {location.charAt(0).toUpperCase() + location.slice(1)}</h2>
-        <span className="item-count">{filtered.length} items</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <select className="sort-select" value={sortBy} onChange={e => setSortBy(e.target.value)}>
+            <option value="expiry">Sort: Expiry</option>
+            <option value="alpha">Sort: A-Z</option>
+            <option value="bought">Sort: Newest</option>
+            <option value="qty">Sort: Quantity</option>
+          </select>
+          <span className="item-count">{filtered.length} items</span>
+        </div>
       </div>
       <DraggableScroll className="category-tabs">
         <button className={`cat-tab ${filterCat === "all" ? "active" : ""}`} onClick={() => setFilterCat("all")}>All</button>
@@ -436,7 +471,7 @@ function LocationPage({ location, items, onUpdate, onDelete, onAdd, onTransfer }
             <p>No items in {location}{filterCat !== "all" ? ` → ${filterCat}` : ""}</p>
           </div>
         ) : filtered.map(item => (
-          <ItemCard key={item.id} item={item} onUpdate={onUpdate} onDelete={onDelete} onTransfer={onTransfer} />
+          <ItemCard key={item.id} item={item} onUpdate={onUpdate} onDelete={onDelete} onTransfer={onTransfer} onEdit={onEdit} />
         ))}
       </div>
     </div>
@@ -680,7 +715,7 @@ function matchRecipeToInventory(recipe, inventoryItems) {
 }
 
 // ─── Recipe Detail View ───
-function RecipeDetail({ recipe, inventoryItems, onBack, onDelete }) {
+function RecipeDetail({ recipe, inventoryItems, onBack, onDelete, onEdit }) {
   const match = matchRecipeToInventory(recipe, inventoryItems);
   const [confirmDel, setConfirmDel] = useState(false);
 
@@ -694,6 +729,7 @@ function RecipeDetail({ recipe, inventoryItems, onBack, onDelete }) {
       <div className="recipe-detail-card">
         <h3 className="recipe-detail-title">{recipe.title}</h3>
         <div className="recipe-meta-row">
+          {recipe.category && <span className="recipe-meta-tag">🏷️ {recipe.category}</span>}
           {recipe.servings && <span className="recipe-meta-tag">👤 {recipe.servings}</span>}
           {recipe.prep_time && <span className="recipe-meta-tag">⏱️ Prep: {recipe.prep_time}</span>}
           {recipe.cook_time && <span className="recipe-meta-tag">🔥 Cook: {recipe.cook_time}</span>}
@@ -760,7 +796,10 @@ function RecipeDetail({ recipe, inventoryItems, onBack, onDelete }) {
       {/* Actions */}
       <div className="recipe-actions">
         {!confirmDel ? (
-          <button className="btn-small btn-danger" onClick={() => setConfirmDel(true)}>Delete Recipe</button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn-small btn-muted" onClick={() => onEdit(recipe)}>Edit Recipe</button>
+            <button className="btn-small btn-danger" onClick={() => setConfirmDel(true)}>Delete Recipe</button>
+          </div>
         ) : (
           <div style={{ display: "flex", gap: 8 }}>
             <button className="btn-small btn-muted" onClick={() => setConfirmDel(false)}>Cancel</button>
@@ -785,6 +824,7 @@ function RecipeCard({ recipe, inventoryItems, onClick }) {
       </div>
       <div className="recipe-card-bottom">
         <span className="recipe-card-meta">
+          {recipe.category ? `${recipe.category} · ` : ""}
           {recipe.ingredients.length} ingredients · {match.matched} in stock
           {recipe.cook_time ? ` · ${recipe.cook_time}` : ""}
         </span>
@@ -795,15 +835,16 @@ function RecipeCard({ recipe, inventoryItems, onClick }) {
 }
 
 // ─── Add Recipe Form (Manual + URL Import) ───
-function AddRecipeForm({ client, onAdded }) {
-  const [mode, setMode] = useState("url"); // "url" or "manual"
+function AddRecipeForm({ client, onAdded, editingRecipe = null, onUpdated, onCancel }) {
+  const [mode, setMode] = useState(editingRecipe ? "manual" : "url"); // "url" or "manual"
   const [url, setUrl] = useState("");
-  const [title, setTitle] = useState("");
-  const [ingredients, setIngredients] = useState("");
-  const [steps, setSteps] = useState("");
+  const [title, setTitle] = useState(editingRecipe?.title || "");
+  const [category, setCategory] = useState(editingRecipe?.category || "Other");
+  const [ingredients, setIngredients] = useState(editingRecipe?.ingredients?.join("\n") || "");
+  const [steps, setSteps] = useState(editingRecipe?.steps?.join("\n") || "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(!!editingRecipe);
 
   const handleImport = async () => {
     if (!url.trim()) return;
@@ -820,18 +861,27 @@ function AddRecipeForm({ client, onAdded }) {
     if (!title.trim() || !ingredients.trim() || !steps.trim()) return;
     setError(""); setLoading(true);
     try {
-      const recipe = await client.addRecipe({
+      const payload = {
         title: title.trim(),
+        category,
         ingredients: ingredients.split("\n").map(l => l.trim()).filter(Boolean),
         steps: steps.split("\n").map(l => l.trim()).filter(Boolean),
-      });
-      onAdded(recipe);
-      setTitle(""); setIngredients(""); setSteps(""); setOpen(false);
+      };
+      if (editingRecipe) {
+        await client.updateRecipe(editingRecipe.id, payload);
+        onUpdated({ ...editingRecipe, ...payload });
+      } else {
+        const recipe = await client.addRecipe(payload);
+        onAdded(recipe);
+      }
+      if (!editingRecipe) {
+        setTitle(""); setIngredients(""); setSteps(""); setCategory("Other"); setOpen(false);
+      }
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   };
 
-  if (!open) {
+  if (!open && !editingRecipe) {
     return (
       <button className="btn-add-item" onClick={() => setOpen(true)}>
         <span className="plus-icon">+</span> Add Recipe
@@ -840,17 +890,19 @@ function AddRecipeForm({ client, onAdded }) {
   }
 
   return (
-    <div className="add-form-overlay" onClick={e => e.target === e.currentTarget && setOpen(false)}>
+    <div className="add-form-overlay" onClick={e => e.target === e.currentTarget && (editingRecipe ? onCancel() : setOpen(false))}>
       <div className="add-form">
         <div className="add-form-header">
-          <h3>Add Recipe</h3>
-          <button className="btn-close" onClick={() => setOpen(false)}>✕</button>
+          <h3>{editingRecipe ? "Edit Recipe" : "Add Recipe"}</h3>
+          <button className="btn-close" onClick={() => editingRecipe ? onCancel() : setOpen(false)}>✕</button>
         </div>
 
-        <div className="auth-tabs" style={{ marginBottom: 16 }}>
-          <button className={`auth-tab ${mode === "url" ? "active" : ""}`} onClick={() => setMode("url")}>From URL</button>
-          <button className={`auth-tab ${mode === "manual" ? "active" : ""}`} onClick={() => setMode("manual")}>Manual</button>
-        </div>
+        {!editingRecipe && (
+          <div className="auth-tabs" style={{ marginBottom: 16 }}>
+            <button className={`auth-tab ${mode === "url" ? "active" : ""}`} onClick={() => setMode("url")}>From URL</button>
+            <button className={`auth-tab ${mode === "manual" ? "active" : ""}`} onClick={() => setMode("manual")}>Manual</button>
+          </div>
+        )}
 
         {mode === "url" ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -870,18 +922,28 @@ function AddRecipeForm({ client, onAdded }) {
               <input type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Chicken Stir Fry" />
             </div>
             <div className="form-group">
+              <label>Category</label>
+              <select value={category} onChange={e => setCategory(e.target.value)}>
+                {RECIPE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
               <label>Ingredients (one per line)</label>
               <textarea value={ingredients} onChange={e => setIngredients(e.target.value)}
                 placeholder={"2 chicken breasts\n1 tbsp soy sauce\n2 cups broccoli\n..."} rows={6}
-                style={{ width: "100%", padding: "10px 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)",
-                  background: "var(--bg-input)", color: "var(--text)", fontFamily: "var(--font-body)", fontSize: 14, resize: "vertical", outline: "none" }} />
+                style={{
+                  width: "100%", padding: "10px 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)",
+                  background: "var(--bg-input)", color: "var(--text)", fontFamily: "var(--font-body)", fontSize: 14, resize: "vertical", outline: "none"
+                }} />
             </div>
             <div className="form-group">
               <label>Steps (one per line)</label>
               <textarea value={steps} onChange={e => setSteps(e.target.value)}
                 placeholder={"Cut chicken into cubes\nHeat oil in wok\nStir fry chicken until golden\n..."} rows={6}
-                style={{ width: "100%", padding: "10px 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)",
-                  background: "var(--bg-input)", color: "var(--text)", fontFamily: "var(--font-body)", fontSize: 14, resize: "vertical", outline: "none" }} />
+                style={{
+                  width: "100%", padding: "10px 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)",
+                  background: "var(--bg-input)", color: "var(--text)", fontFamily: "var(--font-body)", fontSize: 14, resize: "vertical", outline: "none"
+                }} />
             </div>
           </div>
         )}
@@ -902,10 +964,17 @@ function AddRecipeForm({ client, onAdded }) {
 function RecipesPage({ recipes, inventoryItems, client, onRecipesChange }) {
   const [view, setView] = useState("list"); // "list", "detail", "canMake"
   const [selectedRecipe, setSelectedRecipe] = useState(null);
+  const [editingRecipeId, setEditingRecipeId] = useState(null);
+  const [filterCat, setFilterCat] = useState("All");
   const [searchQ, setSearchQ] = useState("");
 
   const handleAdded = (recipe) => {
     onRecipesChange(prev => [recipe, ...prev]);
+  };
+
+  const handleUpdated = (updatedRecipe) => {
+    onRecipesChange(prev => prev.map(r => r.id === updatedRecipe.id ? updatedRecipe : r));
+    setEditingRecipeId(null);
   };
 
   const handleDelete = async (id) => {
@@ -915,16 +984,22 @@ function RecipesPage({ recipes, inventoryItems, client, onRecipesChange }) {
     } catch (e) { console.error(e); }
   };
 
+  if (editingRecipeId) {
+    const editRecipe = recipes.find(r => r.id === editingRecipeId);
+    return <AddRecipeForm client={client} editingRecipe={editRecipe} onUpdated={handleUpdated} onCancel={() => setEditingRecipeId(null)} />;
+  }
+
   if (selectedRecipe) {
     const recipe = recipes.find(r => r.id === selectedRecipe);
     if (recipe) {
       return <RecipeDetail recipe={recipe} inventoryItems={inventoryItems}
-        onBack={() => setSelectedRecipe(null)} onDelete={handleDelete} />;
+        onBack={() => setSelectedRecipe(null)} onDelete={handleDelete} onEdit={() => { setEditingRecipeId(recipe.id); setSelectedRecipe(null); }} />;
     }
   }
 
   // Sort: "canMake" shows highest match first, "list" shows newest first
   const sorted = [...recipes]
+    .filter(r => filterCat === "All" || r.category === filterCat)
     .filter(r => !searchQ || r.title.toLowerCase().includes(searchQ.toLowerCase()) ||
       r.ingredients.some(i => i.toLowerCase().includes(searchQ.toLowerCase())))
     .sort((a, b) => {
@@ -944,7 +1019,7 @@ function RecipesPage({ recipes, inventoryItems, client, onRecipesChange }) {
       </div>
 
       {/* Filter tabs */}
-      <div className="category-tabs" style={{ cursor: "default" }}>
+      <div className="category-tabs" style={{ cursor: "default", paddingBottom: 4, marginBottom: 8 }}>
         <button className={`cat-tab ${view === "list" ? "active" : ""}`} onClick={() => setView("list")}>
           All Recipes
         </button>
@@ -952,6 +1027,19 @@ function RecipesPage({ recipes, inventoryItems, client, onRecipesChange }) {
           🍳 Can Make Now {canMakeRecipes.length > 0 && <span className="tab-count">{canMakeRecipes.length}</span>}
         </button>
       </div>
+
+      <DraggableScroll className="category-tabs">
+        <button className={`cat-tab ${filterCat === "All" ? "active" : ""}`} onClick={() => setFilterCat("All")}>All Categories</button>
+        {RECIPE_CATEGORIES.map(c => {
+          const count = recipes.filter(r => r.category === c).length;
+          if (count === 0 && filterCat !== c) return null; // hide empty categories
+          return (
+            <button key={c} className={`cat-tab ${filterCat === c ? "active" : ""}`} onClick={() => setFilterCat(c)}>
+              {c} <span className="tab-count">{count}</span>
+            </button>
+          );
+        })}
+      </DraggableScroll>
 
       {/* Search */}
       <SearchBar value={searchQ} onChange={setSearchQ} onClear={() => setSearchQ("")} />
@@ -985,6 +1073,7 @@ export default function KitchenInventory() {
   const [page, setPage] = useState("home");
   const [search, setSearch] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [editingItemId, setEditingItemId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const pollRef = useRef(null);
@@ -1195,6 +1284,12 @@ export default function KitchenInventory() {
           background: var(--bg-input); border: none; width: 24px; height: 24px;
           border-radius: 50%; cursor: pointer; color: var(--text-secondary); font-size: 12px;
           display: flex; align-items: center; justify-content: center;
+        }
+
+        .sort-select {
+          padding: 4px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+          background: var(--bg-input); color: var(--text-secondary); font-size: 13px;
+          font-family: var(--font-body); outline: none; cursor: pointer;
         }
 
         /* ─── Stats Row ─── */
@@ -1606,7 +1701,7 @@ export default function KitchenInventory() {
                       {searchResults.length} result{searchResults.length !== 1 ? "s" : ""} for "{search}"
                     </div>
                     {searchResults.map(item => (
-                      <ItemCard key={item.id} item={item} onUpdate={updateItem} onDelete={deleteItem} onTransfer={transferMeat} />
+                      <ItemCard key={item.id} item={item} onUpdate={updateItem} onDelete={deleteItem} onTransfer={transferMeat} onEdit={setEditingItemId} />
                     ))}
                     {searchResults.length === 0 && (
                       <div className="empty-state"><span className="empty-icon">🔍</span><p>No items match your search</p></div>
@@ -1628,7 +1723,7 @@ export default function KitchenInventory() {
                         </div>
                       ))}
                     </div>
-                    <AlertSection items={items} onUpdate={updateItem} onDelete={deleteItem} onTransfer={transferMeat} />
+                    <AlertSection items={items} onUpdate={updateItem} onDelete={deleteItem} onTransfer={transferMeat} onEdit={setEditingItemId} />
                     <h3 className="home-section-title">Quick Add</h3>
                     <AddItemForm onAdd={addItem} />
                   </>
@@ -1638,7 +1733,7 @@ export default function KitchenInventory() {
 
             {["fridge", "freezer", "pantry", "spices"].includes(page) && (
               <LocationPage location={page} items={items} onUpdate={updateItem}
-                onDelete={deleteItem} onAdd={addItem} onTransfer={transferMeat} />
+                onDelete={deleteItem} onAdd={addItem} onTransfer={transferMeat} onEdit={setEditingItemId} />
             )}
 
             {page === "recipes" && (
@@ -1646,6 +1741,14 @@ export default function KitchenInventory() {
                 onRecipesChange={setRecipes} />
             )}
           </div>
+
+          {editingItemId && (
+            <AddItemForm
+              editingItem={items.find(i => i.id === editingItemId)}
+              onAdd={(updates) => { updateItem(editingItemId, updates); setEditingItemId(null); }}
+              onCancel={() => setEditingItemId(null)}
+            />
+          )}
 
           <nav className="bottom-nav">
             <div className="nav-inner">
